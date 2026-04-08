@@ -1,51 +1,100 @@
 use anchor_lang::prelude::*;
-use anchor_lang::system_program;
-use crate::{state::Campaign, error::ErrorCode};
 
+use crate::{
+    constants::{CAMPAIGN_SEED, VAULT_SEED},
+    error::CrowdfundingError,
+    state::Campaign,
+};
+
+/// Accounts required for the creator to withdraw funds after a
+/// successful campaign.
 #[derive(Accounts)]
 pub struct Withdraw<'info> {
-    #[account(
-        mut,
-        seeds = [b"campaign", creator.key().as_ref()],
-        bump = campaign.bump,
-        has_one = creator
-    )]
-    pub campaign: Account<'info, Campaign>,
-    /// CHECK: PDA vault — lamport-only account
-    #[account(
-        mut,
-        seeds = [b"vault", campaign.key().as_ref()],
-        bump = campaign.vault_bump
-    )]
-    pub vault: UncheckedAccount<'info>,
+    /// The campaign creator — must match `campaign.creator`.
     #[account(mut)]
     pub creator: Signer<'info>,
+
+    /// The campaign account — validates creator identity & state.
+    #[account(
+        mut,
+        seeds = [CAMPAIGN_SEED, creator.key().as_ref()],
+        bump = campaign.bump,
+        has_one = creator,
+    )]
+    pub campaign: Account<'info, Campaign>,
+
+    /// Vault holding the donated lamports.
+    ///
+    /// CHECK: PDA-controlled lamport vault. We verify the seeds here and
+    /// use `invoke_signed` with the stored bump to transfer out — no
+    /// arbitrary data is read or written.
+    #[account(
+        mut,
+        seeds = [VAULT_SEED, campaign.key().as_ref()],
+        bump = campaign.vault_bump,
+    )]
+    pub vault: UncheckedAccount<'info>,
+
     pub system_program: Program<'info, System>,
 }
 
-pub fn handler(ctx: Context<Withdraw>) -> Result<()> {
+/// Transfers all vault lamports to the creator.
+///
+/// Conditions that must hold:
+/// * deadline has passed
+/// * raised ≥ goal
+/// * funds not yet claimed
+pub fn withdraw(ctx: Context<Withdraw>) -> Result<()> {
     let now = Clock::get()?.unix_timestamp;
-    let campaign = &mut ctx.accounts.campaign;
 
-    require!(now >= campaign.deadline, ErrorCode::DeadlineNotReached);
-    require!(campaign.raised >= campaign.goal, ErrorCode::GoalNotReached);
-    require!(!campaign.claimed, ErrorCode::AlreadyClaimed);
+    require!(
+        now >= ctx.accounts.campaign.deadline,
+        CrowdfundingError::DeadlineNotReached,
+    );
+    require!(
+        ctx.accounts.campaign.raised >= ctx.accounts.campaign.goal,
+        CrowdfundingError::GoalNotReached,
+    );
+    require!(
+        !ctx.accounts.campaign.claimed,
+        CrowdfundingError::AlreadyClaimed,
+    );
 
-    campaign.claimed = true;
+    // Mark as claimed *before* the transfer (checks-effects-interactions).
+    ctx.accounts.campaign.claimed = true;
 
-    let amount = campaign.raised;
+    // Drain vault → creator via raw lamport manipulation.
+    // The vault has no data so we cannot use Anchor's `close` helper —
+    // we move lamports manually using `invoke_signed`.
+    let vault_lamports = ctx.accounts.vault.lamports();
 
-    system_program::transfer(
-        CpiContext::new_with_signer(
-            system_program::ID,
-            system_program::Transfer {
-                from: ctx.accounts.vault.to_account_info(),
-                to: ctx.accounts.creator.to_account_info(),
-            },
-            &[&[b"vault", campaign.key().as_ref(), &[campaign.vault_bump]]],
+    // Transfer via system program CPI signed by the vault PDA.
+    let campaign_key = ctx.accounts.campaign.key();
+    let vault_seeds: &[&[u8]] = &[
+        VAULT_SEED,
+        campaign_key.as_ref(),
+        &[ctx.accounts.campaign.vault_bump],
+    ];
+
+    anchor_lang::solana_program::program::invoke_signed(
+        &anchor_lang::solana_program::system_instruction::transfer(
+            ctx.accounts.vault.key,
+            ctx.accounts.creator.key,
+            vault_lamports,
         ),
-        amount,
+        &[
+            ctx.accounts.vault.to_account_info(),
+            ctx.accounts.creator.to_account_info(),
+            ctx.accounts.system_program.to_account_info(),
+        ],
+        &[vault_seeds],
     )?;
+
+    msg!(
+        "Withdraw successful | creator={} amount={}",
+        ctx.accounts.creator.key(),
+        vault_lamports,
+    );
 
     Ok(())
 }
