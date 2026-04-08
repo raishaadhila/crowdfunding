@@ -15,7 +15,7 @@ pub struct Withdraw<'info> {
     #[account(
         mut,
         seeds = [b"vault", campaign.key().as_ref()],
-        bump
+        bump = campaign.vault_bump
     )]
     pub vault: UncheckedAccount<'info>,
     #[account(mut)]
@@ -31,24 +31,20 @@ pub fn handler(ctx: Context<Withdraw>) -> Result<()> {
     require!(campaign.raised >= campaign.goal, ErrorCode::GoalNotReached);
     require!(!campaign.claimed, ErrorCode::AlreadyClaimed);
 
-    // Validate vault balance matches raised (prevents external funding desync)
-    let vault_balance = ctx.accounts.vault.lamports();
-    require!(
-        vault_balance >= campaign.raised,
-        ErrorCode::GoalNotReached
-    );
-
     campaign.claimed = true;
 
+    let amount = campaign.raised;
+
     system_program::transfer(
-        CpiContext::new(
+        CpiContext::new_with_signer(
             system_program::ID,
             system_program::Transfer {
                 from: ctx.accounts.vault.to_account_info(),
                 to: ctx.accounts.creator.to_account_info(),
             },
+            &[&[b"vault", campaign.key().as_ref(), &[campaign.vault_bump]]],
         ),
-        vault_balance,
+        amount,
     )?;
 
     Ok(())

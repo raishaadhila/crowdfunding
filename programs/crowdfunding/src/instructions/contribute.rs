@@ -11,7 +11,7 @@ pub struct Contribute<'info> {
     )]
     pub campaign: Account<'info, Campaign>,
     #[account(
-        init,
+        init_if_needed,
         payer = donor,
         space = Contribution::LEN,
         seeds = [b"contribution", campaign.key().as_ref(), donor.key().as_ref()],
@@ -22,7 +22,7 @@ pub struct Contribute<'info> {
     #[account(
         mut,
         seeds = [b"vault", campaign.key().as_ref()],
-        bump
+        bump = campaign.vault_bump
     )]
     pub vault: UncheckedAccount<'info>,
     #[account(mut)]
@@ -48,11 +48,11 @@ pub fn handler(ctx: Context<Contribute>, amount: u64) -> Result<()> {
         amount,
     )?;
 
-    campaign.raised = campaign.raised.checked_add(amount).unwrap();
+    campaign.raised = campaign.raised.checked_add(amount).ok_or(ErrorCode::InvalidAmount)?;
 
     let contribution = &mut ctx.accounts.contribution;
     contribution.donor = ctx.accounts.donor.key();
-    contribution.amount = amount;
+    contribution.amount = contribution.amount.checked_add(amount).ok_or(ErrorCode::InvalidAmount)?;
     contribution.bump = ctx.bumps.contribution;
 
     Ok(())

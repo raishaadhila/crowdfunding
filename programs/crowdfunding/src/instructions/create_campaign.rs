@@ -20,6 +20,7 @@ pub fn handler(ctx: Context<CreateCampaign>, goal: u64, deadline: i64) -> Result
     let now = Clock::get()?.unix_timestamp;
     require!(goal > 0, ErrorCode::InvalidAmount);
     require!(deadline > now, ErrorCode::InvalidDeadline);
+    require!(goal < u64::MAX, ErrorCode::InvalidAmount);
 
     let campaign = &mut ctx.accounts.campaign;
     campaign.creator = ctx.accounts.creator.key();
@@ -28,5 +29,6 @@ pub fn handler(ctx: Context<CreateCampaign>, goal: u64, deadline: i64) -> Result
     campaign.raised = 0;
     campaign.claimed = false;
     campaign.bump = ctx.bumps.campaign;
+    campaign.vault_bump = ctx.bumps.campaign + 1;
     Ok(())
 }

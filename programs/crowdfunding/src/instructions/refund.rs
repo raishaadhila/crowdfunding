@@ -21,7 +21,7 @@ pub struct Refund<'info> {
     #[account(
         mut,
         seeds = [b"vault", campaign.key().as_ref()],
-        bump
+        bump = campaign.vault_bump
     )]
     pub vault: UncheckedAccount<'info>,
     #[account(mut)]
@@ -31,20 +31,23 @@ pub struct Refund<'info> {
 
 pub fn handler(ctx: Context<Refund>) -> Result<()> {
     let now = Clock::get()?.unix_timestamp;
-    let campaign = &ctx.accounts.campaign;
+    let campaign = &mut ctx.accounts.campaign;
 
     require!(now >= campaign.deadline, ErrorCode::DeadlineNotReached);
     require!(campaign.raised < campaign.goal, ErrorCode::GoalAlreadyReached);
 
     let amount = ctx.accounts.contribution.amount;
 
+    campaign.raised = campaign.raised.checked_sub(amount).ok_or(ErrorCode::InvalidAmount)?;
+
     system_program::transfer(
-        CpiContext::new(
+        CpiContext::new_with_signer(
             system_program::ID,
             system_program::Transfer {
                 from: ctx.accounts.vault.to_account_info(),
                 to: ctx.accounts.donor.to_account_info(),
             },
+            &[&[b"vault", campaign.key().as_ref(), &[campaign.vault_bump]]],
         ),
         amount,
     )?;
