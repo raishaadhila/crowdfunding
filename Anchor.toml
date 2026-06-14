@@ -5,11 +5,11 @@ package_manager = "yarn"
 resolution = true
 skip-lint = false
 
-[programs.localnet]
+[programs.devnet]
 crowdfunding = "Fs4wNeXAJKypKodn4kbDs7nmdJeFB6emVY2Ntj3FLqzt"
 
 [provider]
-cluster = "localnet"
+cluster = "devnet"
 wallet = "~/.config/solana/id.json"
 
 [scripts]

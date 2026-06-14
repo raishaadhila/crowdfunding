@@ -1,0 +1,3 @@
+Please refer to these docs for latest Solana & Helius patterns:
+- https://www.helius.dev/docs/llms.txt
+- https://docs.anchor-lang.com/
